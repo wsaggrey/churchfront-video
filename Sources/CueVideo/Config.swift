@@ -134,6 +134,12 @@ struct RouteButton: Codable, Hashable, Identifiable {
 ///
 /// `ndi` names an NDI source exactly as it appears on the network (Setup lists them).
 /// `proto` is canonXC (Canon HTTP), sonyUDP (VISCA over IP, UDP 52381) or rawTCP (VISCA over TCP 5678).
+/// A camera with no network picture at all (HDMI only, such as a DJI Osmo Pocket) shows through the
+/// switcher's USB output when it's the source on it; `usbAux` says which output that is (see CueConfig).
+/// A VISCA camera's picture is the `ndi` of the source for its `atemInput` (an NDI HX camera's own stream):
+///
+///     "sources": [ { "input": 1, "label": "Cam 1", "ndi": "NDI_HX (NDI-26567)" } ],
+///     "cameras": [ { "name": "Cam 1", "host": "192.168.1.61", "proto": "sonyUDP", "atemInput": 1 } ]
 struct CueConfig: Codable, Equatable {
     var atemHost = ""
     /// The M/E the volunteer runs, counted from 1 as on the switcher.
@@ -163,10 +169,14 @@ struct CueConfig: Codable, Equatable {
     /// Changes to the follow-shot framing, by size: "shoulders", "waist", "full".
     var framing: [String: FramingRule] = [:]
     var trackTuning = TrackTuning()
+    /// The switcher output this Mac's USB video comes from, for showing HDMI-only cameras: an
+    /// aux counted from 1, 0 for a switcher whose USB output is always Program, -1 for off.
+    /// Left out, it's worked out from the model (ATEM Mini Pro: aux 2).
+    var usbAux: Int?
 
     init() {}
 
-    private enum Keys: String, CodingKey { case atemHost, me, sources, cameras, keys, trackSpeed, ptzSpeed, trackTilt, trackZoom, mixNames, pictures, screens, routes, framing, trackTuning }
+    private enum Keys: String, CodingKey { case atemHost, me, sources, cameras, keys, trackSpeed, ptzSpeed, trackTilt, trackZoom, mixNames, pictures, screens, routes, framing, trackTuning, usbAux }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -185,6 +195,7 @@ struct CueConfig: Codable, Equatable {
         routes = try c.decodeIfPresent([RouteButton].self, forKey: .routes) ?? []
         framing = try c.decodeIfPresent([String: FramingRule].self, forKey: .framing) ?? [:]
         trackTuning = try c.decodeIfPresent(TrackTuning.self, forKey: .trackTuning) ?? TrackTuning()
+        usbAux = try c.decodeIfPresent(Int.self, forKey: .usbAux)
     }
 }
 
@@ -229,9 +240,14 @@ final class ConfigStore: ObservableObject {
             config = c
         }
         apply()
-        // Cameras edited in the app go back to the file.
-        booth.ptz.$cameras.dropFirst().receive(on: RunLoop.main).sink { [weak self] cams in
-            self?.update { $0.cameras = cams }
+        // Cameras edited in the app go back to the file. Write what the cameras are *now*, not
+        // the value the notice carried: notices arrive a moment late, and writing an older
+        // value back puts it into the cameras again, which sends another notice, and so on.
+        // That loop cycled the file through every edit ever typed, once a second, and
+        // restarted the camera links each time so no camera ever showed as answering.
+        booth.ptz.$cameras.dropFirst().receive(on: RunLoop.main).sink { [weak self, weak booth] _ in
+            guard let self, let booth else { return }
+            self.update { $0.cameras = booth.ptz.cameras }
         }.store(in: &bag)
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.poll() }
     }

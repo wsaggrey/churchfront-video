@@ -1,6 +1,6 @@
 import XCTest
 import Network
-import CueATEM
+@testable import CueATEM
 
 /// A camera must never be left moving: these run the real camera code against pretend
 /// cameras on this Mac (no hardware) and check that the stop goes out.
@@ -54,6 +54,27 @@ final class CameraStopTests: XCTestCase {
         XCTAssertEqual(a.zooms.last, true, "zoom wasn't stopped")
     }
 
+    // MARK: A camera over UDP stops answering
+
+    /// UDP has no connection to drop, so a camera over VISCA over IP counts as answering
+    /// only while it answers the regular position inquiry, and as gone once it stops.
+    func testAUDPCameraCountsAsAnsweringOnlyWhileItAnswers() throws {
+        let a = try FakeVISCACamera()
+        a.answers = true
+        let (every, silence) = (VISCALink.udpCheckEvery, VISCALink.udpSilence)
+        VISCALink.udpCheckEvery = 0.3; VISCALink.udpSilence = 1
+        defer { VISCALink.udpCheckEvery = every; VISCALink.udpSilence = silence }
+        var cam = PTZCamera(); cam.host = "127.0.0.1"; cam.port = a.port; cam.proto = .sonyUDP
+        let ptz = PTZController(load: false)
+        ptz.cameras = [cam]
+        wait(3) { ptz.online.contains(cam.id) }
+        XCTAssertTrue(ptz.online.contains(cam.id), "a camera that answers inquiries should show as answering")
+
+        a.answers = false                         // unplugged
+        wait(4) { !ptz.online.contains(cam.id) }
+        XCTAssertFalse(ptz.online.contains(cam.id), "a camera that stopped answering is still shown as answering")
+    }
+
     // MARK: A Canon request fails while a stop is waiting
 
     /// Canon commands go one at a time. If one fails (here the camera turns down an exposure
@@ -89,7 +110,15 @@ final class FakeVISCACamera {
     private let queue = DispatchQueue(label: "fake.visca")
     private let lock = NSLock()
     private var _moves: [Move] = [], _zooms: [Bool] = []
+    private var _answers = false
     private(set) var port: UInt16 = 0
+
+    /// Whether the camera answers position inquiries (with the VISCA over IP header), as a
+    /// real camera does. Off, it swallows everything, like one that lost power.
+    var answers: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _answers }
+        set { lock.lock(); _answers = newValue; lock.unlock() }
+    }
 
     var moves: [Move] { lock.lock(); defer { lock.unlock() }; return _moves }
     /// One entry per zoom command: true for a zoom stop.
@@ -121,7 +150,14 @@ final class FakeVISCACamera {
                 if v.count == 9, v[2] == 0x06, v[3] == 0x01 { self._moves.append(Move(isStop: v[6] == 0x03 && v[7] == 0x03)) }
                 // Zoom: 81 01 04 07 xx FF; 00 is stop.
                 if v.count == 6, v[2] == 0x04, v[3] == 0x07 { self._zooms.append(v[4] == 0x00) }
+                let answer = self._answers
                 self.lock.unlock()
+                // Pan/tilt position inquiry 81 09 06 12 FF: answer "pointing straight ahead".
+                if answer, v == [0x81, 0x09, 0x06, 0x12, 0xFF] {
+                    let header = [0x01, 0x11, 0x00, 0x0B] + Array(data[4..<8])
+                    let reply: [UInt8] = [0x90, 0x50, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF]
+                    c.send(content: Data(header + reply), completion: .contentProcessed { _ in })
+                }
             }
             if err == nil { self.receive(c) }
         }

@@ -6,8 +6,13 @@ import Combine
 // - Canon (HTTP): Canon's own control protocol on port 80 (CR-N series and
 //   other Canon PTZs). Works out of the box and reports the camera's preset names.
 // - VISCA over IP (UDP 52381): Sony, BirdDog, newer PTZOptics, Panasonic in VISCA mode,
-//   Canon when its VISCA setting is on.
+//   Canon when its VISCA setting is on, and NDI HX cameras such as Fomako (the one
+//   tested answered position and zoom inquiries here but never on TCP 5678).
 // - VISCA over TCP (5678): PTZOptics and most budget cameras.
+//
+// Only Canon's protocol reads a picture; every other camera's picture is the NDI source
+// set for its switcher input (an NDI HX camera's own stream, say). None of the VISCA
+// cameras need a login: the admin login in Setup is for Canon preset changes only.
 
 public enum VISCAProtocol: String, Codable, CaseIterable, Identifiable {
     case canonXC, sonyUDP, rawTCP
@@ -284,6 +289,13 @@ final class VISCALink: PTZLink {
     var onExposure: ((CameraExposure) -> Void)?
     var onControl: ((Bool) -> Void)?
     private var online = false { didSet { if online != oldValue { onState?(online) } } }
+    /// UDP has no connection to tell us the camera went away, so a position inquiry goes out
+    /// every `udpCheckEvery` seconds and the camera counts as gone after `udpSilence` seconds
+    /// without an answer. Only touched on `queue`.
+    private var lastRx = Date.distantPast
+    private var liveness: DispatchSourceTimer?
+    static var udpCheckEvery = 4.0
+    static var udpSilence = 10.0
     // Reading the position. Only touched on `queue`.
     private var rx: [UInt8] = []
     /// Who is waiting for the position, and whether they want the camera's own counts (to save
@@ -346,18 +358,29 @@ final class VISCALink: PTZLink {
         receive(c)
         if camera.proto == .sonyUDP {
             seq = 0
-            // Reset the camera's sequence number, then ask for power so we know it answers.
+            // Reset the camera's sequence number, then ask where it points so we know it
+            // answers (some cameras turn down the power inquiry, but all answer this one).
             c.send(content: Data([0x02, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0x01]), completion: .contentProcessed { _ in })
-            send([0x81, 0x09, 0x04, 0x00, 0xFF], inquiry: true)
+            ask(.panTilt, [0x81, 0x09, 0x06, 0x12, 0xFF])
+            liveness?.cancel()
+            let t = DispatchSource.makeTimerSource(queue: queue)
+            t.schedule(deadline: .now() + Self.udpCheckEvery, repeating: Self.udpCheckEvery)
+            t.setEventHandler { [weak self] in
+                guard let self, self.conn === c else { return }
+                if self.online, Date().timeIntervalSince(self.lastRx) > Self.udpSilence { self.online = false }
+                self.ask(.panTilt, [0x81, 0x09, 0x06, 0x12, 0xFF])
+            }
+            t.resume()
+            liveness = t
         }
     }
 
-    func stop() { conn?.cancel(); conn = nil; online = false }
+    func stop() { liveness?.cancel(); liveness = nil; conn?.cancel(); conn = nil; online = false }
 
     private func receive(_ c: NWConnection) {
         let handler: (Data?, NWConnection.ContentContext?, Bool, NWError?) -> Void = { [weak self] data, _, done, err in
             guard let self, c === self.conn else { return }
-            if let data, !data.isEmpty { self.online = true; self.received(data) }
+            if let data, !data.isEmpty { self.lastRx = Date(); self.online = true; self.received(data) }
             // A TCP camera that reboots closes the stream (or errors) without the connection
             // ever leaving .ready, so reconnect here or every later command goes nowhere.
             if self.camera.proto == .rawTCP, err != nil || (done && (data?.isEmpty ?? true)) {
@@ -417,6 +440,9 @@ final class VISCALink: PTZLink {
     }
 
     func autoFocus(_ on: Bool) { send([0x81, 0x01, 0x04, 0x38, on ? 0x02 : 0x03, 0xFF]) }
+    /// One-push autofocus. In auto focus the camera is focusing anyway and some ignore this;
+    /// in manual focus it focuses once and holds, like a focus lock. Camera > Auto Focus
+    /// (autoFocus(true)) hands focus back to the camera.
     func focusOnce() { send([0x81, 0x01, 0x04, 0x18, 0x01, 0xFF]) }
     func home() { send([0x81, 0x01, 0x06, 0x04, 0xFF]) }
     func recall(_ n: Int) { send([0x81, 0x01, 0x04, 0x3F, 0x02, UInt8(clamping: n - 1 + camera.firstPreset), 0xFF]) }
