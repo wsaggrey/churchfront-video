@@ -152,14 +152,19 @@ struct SetupTab: View {
                         } }
                     ))
                     .textFieldStyle(CueFieldStyle()).frame(width: 200)
-                    if ptz.cameras.contains(where: { $0.atemInput == s.input }) {
+                    if ptz.cameras.contains(where: { $0.atemInput == s.input && $0.proto == .canonXC && !$0.host.isEmpty }) {
                         Label("The camera's own picture", systemImage: "video").font(.sans(12)).foregroundStyle(T.inkSubtle)
                     } else {
-                        NDIPicker(selection: s.ndi, none: "No picture") { v in store.update { c in
+                        // A VISCA camera (an NDI HX camera such as a Fomako or PTZOptics) has no
+                        // picture of its own here: its NDI stream is the picture for its input.
+                        let isCamera = ptz.cameras.contains { $0.atemInput == s.input }
+                        NDIPicker(selection: s.ndi, none: isCamera ? "No picture (pick the camera's NDI stream)" : "No picture") { v in store.update { c in
                             if let j = c.sources.firstIndex(where: { $0.input == s.input }) { c.sources[j].ndi = v }
                         } }
                         .frame(width: 280)
-                        .help("An NDI source showing what this input carries, such as a Churchfront Screens screen sent to NDI, for its tile and the Next and Live pictures.")
+                        .help(isCamera
+                              ? "This camera's NDI stream, as it announces itself on the network. Its tile, the Next and Live pictures, auto tracking and snapshots all use it."
+                              : "An NDI source showing what this input carries, such as a Churchfront Screens screen sent to NDI, for its tile and the Next and Live pictures.")
                     }
                     Spacer(minLength: 0)
                     IconButton(icon: "chevron.up", help: "Move earlier in the row") { move(s.input, by: -1) }.disabled(i == 0)
@@ -262,7 +267,7 @@ struct SetupTab: View {
                 .buttonStyle(CueButton())
             }
             Card(title: "Camera admin login",
-                 help: "Only needed to delete or change presets stored on the cameras themselves. Saved in this Mac's Keychain, not in the setup file. One login for every Canon camera. macOS may ask for this Mac's password the first time Churchfront Video uses it after an update.") {
+                 help: "Only needed to delete or change presets stored on Canon cameras themselves. Saved in this Mac's Keychain, not in the setup file. One login for every Canon camera. VISCA and NDI cameras (Fomako, PTZOptics, BirdDog) need no login here; their web page's login isn't used. macOS may ask for this Mac's password the first time Churchfront Video uses it after an update.") {
                 CameraLoginRow()
             }
             .frame(maxWidth: 760, alignment: .leading)
@@ -594,14 +599,42 @@ enum StatusReport {
         if s.hasStreaming || s.hasRecording {
             rows.append(("Stream and record", "\(s.hasStreaming ? (s.streaming ? "streaming" : "not streaming") : "no streaming"), \(s.hasRecording ? (s.recording ? "recording" : "not recording") : "no recording")"))
         }
+        rows.append(("USB picture", usbPicture(b)))
         return rows
+    }
+
+    /// The switcher's USB video on this Mac: what it shows and whether it's coming in.
+    static func usbPicture(_ b: Booth) -> String {
+        let s = b.atem.state
+        guard USBFeedHub.available else { return "No switcher on this Mac's USB (plug the ATEM Mini's USB into the Mac to see HDMI-only cameras)" }
+        guard let aux = b.store.usbAux(s) else { return "A Blackmagic video device is on USB, but usbAux isn't set and this model doesn't say which output it carries" }
+        let carries = aux == 0 ? "Program" : "aux \(aux): \(b.store.routeLabel(s.aux[aux - 1], s))"
+        let shows = b.store.usbInput(s).map { "input \($0) (\(b.store.label($0, s)))" } ?? "no input (nothing to show)"
+        let feed = USBFeedHub.shared.feed
+        let state: String = {
+            switch USBFeedHub.shared.isLive {
+            case .some(true): return "coming in" + (feed.shape.isEmpty ? "" : ", \(feed.shape)")
+            case .some(false): return feed.problem ?? "waiting for frames"
+            case .none: return "not showing on screen right now"
+            }
+        }()
+        return "\(feed.deviceName ?? "Blackmagic Design") carries \(carries), so it shows \(shows). \(state.prefix(1).uppercased() + state.dropFirst())"
     }
 
     static func cameraRows(_ c: PTZCamera, _ b: Booth) -> [(String, String)] {
         let s = b.atem.state
         let input = c.atemInput.map { "\(s.inputs[$0]?.long ?? "input \($0)") (input \($0))" } ?? "not set"
         let picture: String = {
-            guard c.proto == .canonXC else { return "Not available for VISCA cameras" }
+            guard c.proto == .canonXC else {
+                guard let n = b.store.ndi(c.atemInput) else {
+                    return c.atemInput == nil ? "No switcher input set, so no picture" : "No NDI picture set for its input (Setup > Volunteer source row)"
+                }
+                switch NDIFeedHub.shared.isLive(n) {
+                case .some(true): return "Coming in (NDI, \(n))"
+                case .some(false): return "Waiting for NDI source \(n)"
+                case .none: return "Not showing on screen right now (NDI, \(n))"
+                }
+            }
             switch CanonFeedHub.shared.isLive(c) {
             case .some(true): return "Coming in (Canon video.cgi, motion JPEG)"
             case .some(false): return "Connecting or stopped"

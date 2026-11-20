@@ -30,6 +30,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSLocalNetworkUsageDescription</key><string>Churchfront Video controls your ATEM switcher and PTZ cameras and shows NDI video from your network.</string>
+  <key>NSCameraUsageDescription</key><string>Churchfront Video shows the ATEM switcher's USB video output, so cameras with no network picture (HDMI only) can be seen in the monitors. It never uses this Mac's own camera.</string>
   <key>NSBonjourServices</key><array><string>_ndi._tcp</string><string>_blackmagic._tcp</string><string>_http._tcp</string></array>
 </dict>
 </plist>

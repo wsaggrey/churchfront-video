@@ -107,6 +107,9 @@ struct BusMonitor: View {
             CameraVideo(camera: camera, onPick: pick ? self.pick(camera) : nil).id(camera.id)
         } else if let n = store.ndi(input) {
             NDIVideo(source: n).id(n)
+        } else if store.usbShows(input, atem.state) {
+            // An HDMI-only camera: seen through the switcher's USB output while it's on it.
+            USBVideo().id("usb")
         } else {
             Text(store.label(input, atem.state))
                 .font(.sans(34, .bold)).foregroundStyle(T.inkMuted)
@@ -170,7 +173,7 @@ struct BusMonitor: View {
             }
         }
         .overlay(alignment: .bottomLeading) {
-            if camera != nil || store.ndi(input) != nil {
+            if camera != nil || store.ndi(input) != nil || store.usbShows(input, atem.state) {
                 Text(store.label(input, atem.state)).font(.sans(15, .semibold)).foregroundStyle(.white)
                     .padding(.horizontal, 10).frame(height: 28)
                     .background(Capsule().fill(Color.black.opacity(0.6)))
@@ -232,6 +235,8 @@ struct SourceTile: View {
                     CameraVideo(camera: camera).id(camera.id)
                 } else if let n = source.ndi, !n.isEmpty {
                     NDIVideo(source: n).id(n)
+                } else if store.usbShows(source.input, atem.state) {
+                    USBVideo().id("usb")
                 } else {
                     T.surfaceRaised
                 }
@@ -286,6 +291,7 @@ struct FramePanel: View {
                 ZoomRocker { ptz.zoom($0) }.frame(width: 44, height: 170)
                 VStack(alignment: .leading, spacing: T.s2) {
                     SmallButton("Focus") { ptz.focusOnce() }.frame(width: 140)
+                        .help("Focus once on what's in the middle of the shot (⇧⌘F). Camera > Auto Focus (⌥⌘F) hands focus back to the camera if it was left in manual focus.")
                     if let t = target { TrackButton(camera: t).frame(width: 140) }
                     if let t = target, !ptz.online.contains(t.id) {
                         Text("Not answering").font(.sans(11, .semibold)).foregroundStyle(T.warning)

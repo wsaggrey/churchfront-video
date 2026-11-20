@@ -6,6 +6,7 @@ func sourceHasPicture(_ input: Int?, _ state: ATEMState, _ ptz: PTZController, _
     guard var id = input else { return false }
     if (10000..<11000).contains(id), id % 10 == 0 { id = state.program[(id - 10000) / 10 - 1] ?? id }
     return ptz.cameras.contains { $0.atemInput == id && $0.proto == .canonXC && !$0.host.isEmpty } || store.ndi(id) != nil
+        || store.usbShows(id, state)
 }
 
 /// A source's live picture, for anywhere one is shown small: the camera's own preview, the
@@ -31,6 +32,8 @@ struct SourcePicture: View {
                 CameraVideo(camera: cam).id(cam.id)
             } else if let n = store.ndi(id) {
                 NDIVideo(source: n).id(n)
+            } else if store.usbShows(id, atem.state) {
+                USBVideo().id("usb")
             } else {
                 T.surfaceRaised
                 if named { Text(store.routeLabel(id, atem.state)).font(.sans(15, .bold)).foregroundStyle(T.inkMuted)

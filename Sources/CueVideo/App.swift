@@ -226,6 +226,8 @@ struct BoothCommands: Commands {
             Divider()
             Button("Focus the Camera on Next") { if let c = booth.cameraOnNext { booth.ptz.focusOnce(camera: c.id) } }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
+            Button("Auto Focus the Camera on Next") { if let c = booth.cameraOnNext { booth.ptz.autoFocus(true, camera: c.id) } }
+                .keyboardShortcut("f", modifiers: [.command, .option])
             }
             .disabled(booth.view != .operate)
         }

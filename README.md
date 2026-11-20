@@ -7,7 +7,7 @@ Churchfront Lights, Churchfront Tracks). Native macOS 14+, SwiftUI.
 - `Sources/CueATEM`: the shared engine. `ATEM.swift` speaks the ATEM network
   protocol (UDP 9910) with two-way state; `PTZ.swift` drives Canon cameras over
   Canon's HTTP control and VISCA cameras (VISCA over IP UDP 52381, or VISCA over
-  TCP 5678); `CameraLogin.swift` keeps the cameras' admin login in the Keychain.
+  TCP 5678); `CameraLogin.swift` keeps the Canon cameras' admin login in the Keychain.
   Meant to be used by Churchfront Screens (slide actions) and Churchfront Cues too.
 - `Sources/NDIBridge`: copied from Churchfront Screens; loads the NDI runtime at run time.
 - `Sources/CueVideo`: the app.
@@ -23,7 +23,7 @@ Churchfront Lights, Churchfront Tracks). Native macOS 14+, SwiftUI.
       the arrows do nothing here.
   - Menu bar: **View** (Operator, Engineer), **Switcher** (Cut, Fade, Fade to Black,
     key buttons), **Camera** (Track ⌘T, Stop All Tracking ⌘., Follow by Name, Focus
-    ⇧⌘F) and **Engineer** (its pages). Switcher and Camera only act from the Operator view.
+    ⇧⌘F, Auto Focus ⌥⌘F) and **Engineer** (its pages). Switcher and Camera only act from the Operator view.
 - `Sources/CueVideoMCP`: the MCP server Claude uses (see below).
 
 Build: `./build.sh` (or `./build.sh debug`) makes `Churchfront Video.app`. Inside it, the
@@ -86,6 +86,40 @@ Camera tools refuse a camera that's on Live unless the call says `allow_live: tr
 - **Volunteer routing buttons:** route the screens the way you want, then save that as a button. The buttons sit in the bottom right of the main window, work like macros (one press can change several screens), and light up while the screens match them. Below them, a short summary says what each volunteer-facing screen is showing.
 
 In the config file, this is `mixNames`, `screens` and `routes`. Claude can use `get_routing`, `route_screen` and `run_route_button`. `route_screen` refuses hidden outputs, such as the stream encoder, unless the call says `allow_hidden: true`.
+
+## NDI HX PTZ cameras (Fomako, PTZOptics, BirdDog) with an ATEM Mini
+
+A camera that sends NDI HX (a Fomako NDI HX3, say) plugs into one of the ATEM Mini's HDMI
+inputs for the switcher, and Churchfront Video talks to it over the network for control and
+for its picture, with no login:
+
+- **Control:** add the camera in Setup with **VISCA over IP (UDP)**, port 52381 (the Fomako
+  tested answered position and zoom inquiries there and never on VISCA over TCP 5678), and
+  set its switcher input to the HDMI it's on. Presets count from 0.
+- **Picture:** under Volunteer source row, pick the camera's own NDI stream (it announces
+  itself as something like `NDI_HX (NDI-26567)`) as the picture for that input. Its tile, the
+  Next and Live monitors, auto tracking and Claude's snapshots all use it. Needs NDI Tools on
+  this Mac, as every NDI picture does.
+- The camera's web page login (often admin / admin) isn't needed: VISCA and NDI take none.
+  The admin login in Setup is only for changing presets stored on Canon cameras.
+
+In the config file, that's a camera with `"proto": "sonyUDP"` and `"atemInput"`, and the
+source for that input with its `ndi` name.
+
+## HDMI-only cameras (DJI Osmo Pocket, camcorders) through the switcher's USB
+
+A camera that only gives the switcher HDMI has no picture Churchfront Video can fetch over
+the network. Plug the ATEM Mini's USB into the Mac and it shows up as a webcam called
+"Blackmagic Design" carrying the switcher's USB output (Program, on an ATEM Mini Pro aux 2).
+Churchfront Video shows that picture wherever the source on it is drawn: in the Live monitor,
+and on that camera's tile while it's Live. Nothing is sent to the switcher. macOS asks for
+camera access the first time, since the ATEM counts as a camera; this Mac's own camera is
+never used. Engineer → Status says what the USB output carries and whether frames arrive.
+
+In the config file, `usbAux` names the output the USB video comes from (an aux from 1, 0 for
+always Program, -1 for off); left out, it's worked out from the switcher model. A DJI Osmo
+Pocket 4 / 4P has no HDMI socket: it needs a USB-C to HDMI cable (DJI doesn't officially
+support this; dealers report it working, 1080p while recording 4K or 4K while recording 1080p).
 
 ## Graphics and lower thirds previews (NDI)
 

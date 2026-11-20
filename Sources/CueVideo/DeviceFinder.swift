@@ -149,7 +149,7 @@ private final class Bonjour: NSObject, NetServiceBrowserDelegate, NetServiceDele
         guard let ip = sender.addresses?.compactMap(Self.ipv4).first else { return }
         let kind: String
         switch sender.type {
-        case "_ndi._tcp.": kind = "NDI source (use the name for ndi fields; a PTZ camera here usually takes proto sonyUDP or rawTCP)"
+        case "_ndi._tcp.": kind = "NDI source (use the name for ndi fields; an NDI HX PTZ camera here, such as a Fomako or PTZOptics, usually takes proto sonyUDP on port 52381, or rawTCP on 5678, and this name as the ndi of its switcher input's source)"
         case "_blackmagic._tcp.": kind = "Blackmagic device"
         default: kind = "Web page (a camera, converter or other device with a control page)"
         }
